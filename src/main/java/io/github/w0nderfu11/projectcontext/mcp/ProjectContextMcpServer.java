@@ -13,7 +13,7 @@ public final class ProjectContextMcpServer {
             PingTool pingTool
     ) {
         this.server = McpServer.sync(transport.transport())
-                .serverInfo("project-context", "0.1.0")
+                .serverInfo("project-context", "0.2.0")
                 .tools(pingTool.specification())
                 .build();
     }

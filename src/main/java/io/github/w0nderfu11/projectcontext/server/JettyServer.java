@@ -51,4 +51,8 @@ public final class JettyServer {
     public int localPort() {
         return ((ServerConnector) server.getConnectors()[0]).getLocalPort();
     }
+
+    public void join() throws InterruptedException {
+        server.join();
+    }
 }

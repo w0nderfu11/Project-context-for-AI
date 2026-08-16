@@ -12,6 +12,8 @@ target/
 .idea/libraries/
 *.iws
 *.iml
+project-context.iml
+secrets/
 
 ### Eclipse ###
 .apt_generated
