@@ -13,15 +13,18 @@ public final class ProjectContextApplication {
         PingTool pingTool = new PingTool(pingService);
 
         McpHttpTransport transport = new McpHttpTransport();
-        new ProjectContextMcpServer(transport, pingTool);
 
-        JettyServer server = new JettyServer(
-                "127.0.0.1",
-                8765,
-                transport.handler()
-        );
+        try (ProjectContextMcpServer mcpServer =
+                     new ProjectContextMcpServer(transport, pingTool)) {
 
-        server.start();
-        server.join();
+            JettyServer server = new JettyServer(
+                    "127.0.0.1",
+                    8765,
+                    transport.handler()
+            );
+
+            server.start();
+            server.join();
+        }
     }
 }
