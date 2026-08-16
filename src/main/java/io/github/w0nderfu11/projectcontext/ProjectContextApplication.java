@@ -14,7 +14,7 @@ public final class ProjectContextApplication {
 
         McpHttpTransport transport = new McpHttpTransport();
 
-        try (ProjectContextMcpServer mcpServer =
+        try (ProjectContextMcpServer ignored =
                      new ProjectContextMcpServer(transport, pingTool)) {
 
             JettyServer server = new JettyServer(
