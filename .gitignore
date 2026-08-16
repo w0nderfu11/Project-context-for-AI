@@ -12,6 +12,9 @@ target/
 .idea/libraries/
 *.iws
 *.iml
+project-context.iml
+secrets/
+tunnel-client
 
 ### Eclipse ###
 .apt_generated
