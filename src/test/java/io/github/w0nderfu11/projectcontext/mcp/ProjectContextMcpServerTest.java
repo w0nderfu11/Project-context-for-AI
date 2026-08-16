@@ -5,200 +5,253 @@ import io.github.w0nderfu11.projectcontext.mcp.tools.PingTool;
 import io.github.w0nderfu11.projectcontext.server.JettyServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectContextMcpServerTest {
 
+    private static final String VERSION_RESOURCE = "/project-context.properties";
+    private static final String VERSION_PROPERTY = "project.version";
+
     @Test
-    void shouldCreateMcpServer() {
+    void shouldCreateAndCloseMcpServer() {
         McpHttpTransport transport = new McpHttpTransport();
-        PingService pingService = new PingService();
-        PingTool pingTool = new PingTool(pingService);
+        PingTool pingTool = new PingTool(new PingService());
 
         assertDoesNotThrow(() ->
-                new ProjectContextMcpServer(transport, pingTool)
+                new ProjectContextMcpServer(transport, pingTool).close()
         );
+    }
+
+    @Test
+    @SuppressWarnings("resource")
+    void shouldRejectNullTransport() {
+        PingTool pingTool = new PingTool(new PingService());
+
+        NullPointerException exception = assertThrows(
+                NullPointerException.class,
+                () -> new ProjectContextMcpServer(null, pingTool)
+        );
+
+        assertEquals("transport must not be null", exception.getMessage());
+    }
+
+
+    @Test
+    @SuppressWarnings("resource")
+    void shouldRejectNullPingTool() {
+        McpHttpTransport transport = new McpHttpTransport();
+
+        NullPointerException exception = assertThrows(
+                NullPointerException.class,
+                () -> new ProjectContextMcpServer(transport, null)
+        );
+
+        assertEquals("pingTool must not be null", exception.getMessage());
     }
 
     @Test
     void shouldInitializeMcpServerOverHttp() throws Exception {
         McpHttpTransport transport = new McpHttpTransport();
-        PingService pingService = new PingService();
-        PingTool pingTool = new PingTool(pingService);
+        PingTool pingTool = new PingTool(new PingService());
 
-        new ProjectContextMcpServer(transport, pingTool);
+        try (ProjectContextMcpServer ignored =
+                     new ProjectContextMcpServer(transport, pingTool)) {
 
-        JettyServer httpServer = new JettyServer(
-                "127.0.0.1",
-                0,
-                transport.handler()
-        );
+            JettyServer httpServer = new JettyServer(
+                    "127.0.0.1",
+                    0,
+                    transport.handler()
+            );
 
-        try {
-            httpServer.start();
+            try {
+                httpServer.start();
 
-            String requestBody = """
-                    {
-                      "jsonrpc": "2.0",
-                      "id": 1,
-                      "method": "initialize",
-                      "params": {
-                        "protocolVersion": "2025-11-25",
-                        "capabilities": {},
-                        "clientInfo": {
-                          "name": "project-context-test",
-                          "version": "1.0"
-                        }
-                      }
-                    }
-                    """;
+                URI endpoint = endpoint(httpServer);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(
-                            "http://127.0.0.1:"
-                                    + httpServer.localPort()
-                                    + McpEndpoint.MCP
-                    ))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json, text/event-stream")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    HttpResponse<String> response = client.send(
+                            initializeRequest(endpoint),
+                            HttpResponse.BodyHandlers.ofString()
+                    );
 
-            try (HttpClient client = HttpClient.newHttpClient()) {
-                HttpResponse<String> response = client.send(
-                        request,
-                        HttpResponse.BodyHandlers.ofString()
-                );
-
-                assertEquals(200, response.statusCode());
-                assertTrue(response.body().contains("\"project-context\""));
-                assertTrue(response.body().contains("\"0.1.0\""));
+                    assertEquals(200, response.statusCode());
+                    assertTrue(response.body().contains("\"project-context\""));
+                    assertTrue(response.body().contains(
+                            "\"" + projectVersion() + "\""
+                    ));
+                }
+            } finally {
+                httpServer.stop();
             }
-        } finally {
-            httpServer.stop();
         }
     }
 
     @Test
     void shouldCallPingToolOverHttp() throws Exception {
         McpHttpTransport transport = new McpHttpTransport();
-        PingService pingService = new PingService();
-        PingTool pingTool = new PingTool(pingService);
+        PingTool pingTool = new PingTool(new PingService());
 
-        new ProjectContextMcpServer(transport, pingTool);
+        try (ProjectContextMcpServer ignored =
+                     new ProjectContextMcpServer(transport, pingTool)) {
 
-        JettyServer httpServer = new JettyServer(
-                "127.0.0.1",
-                0,
-                transport.handler()
-        );
-
-        try {
-            httpServer.start();
-
-            URI endpoint = URI.create(
-                    "http://127.0.0.1:"
-                            + httpServer.localPort()
-                            + McpEndpoint.MCP
+            JettyServer httpServer = new JettyServer(
+                    "127.0.0.1",
+                    0,
+                    transport.handler()
             );
 
-            try (HttpClient client = HttpClient.newHttpClient()) {
+            try {
+                httpServer.start();
 
-                String initializeBody = """
-                    {
-                      "jsonrpc": "2.0",
-                      "id": 1,
-                      "method": "initialize",
-                      "params": {
-                        "protocolVersion": "2025-11-25",
-                        "capabilities": {},
-                        "clientInfo": {
-                          "name": "project-context-test",
-                          "version": "1.0"
+                URI endpoint = endpoint(httpServer);
+
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    HttpResponse<String> initializeResponse = client.send(
+                            initializeRequest(endpoint),
+                            HttpResponse.BodyHandlers.ofString()
+                    );
+
+                    assertEquals(200, initializeResponse.statusCode());
+
+                    String sessionId = initializeResponse.headers()
+                            .firstValue("Mcp-Session-Id")
+                            .orElseThrow();
+
+                    //noinspection UastIncorrectHttpHeaderInspection
+                    HttpRequest initializedRequest = HttpRequest.newBuilder()
+                            .uri(endpoint)
+                            .header("Content-Type", "application/json")
+                            .header(
+                                    "Accept",
+                                    "application/json, text/event-stream"
+                            )
+                            .header("Mcp-Session-Id", sessionId)
+                            .POST(HttpRequest.BodyPublishers.ofString("""
+                                    {
+                                      "jsonrpc": "2.0",
+                                      "method": "notifications/initialized"
+                                    }
+                                    """))
+                            .build();
+
+                    HttpResponse<String> initializedResponse = client.send(
+                            initializedRequest,
+                            HttpResponse.BodyHandlers.ofString()
+                    );
+
+                    assertEquals(202, initializedResponse.statusCode());
+
+                    //noinspection UastIncorrectHttpHeaderInspection
+                    HttpRequest pingRequest = HttpRequest.newBuilder()
+                            .uri(endpoint)
+                            .header("Content-Type", "application/json")
+                            .header(
+                                    "Accept",
+                                    "application/json, text/event-stream"
+                            )
+                            .header("Mcp-Session-Id", sessionId)
+                            .POST(HttpRequest.BodyPublishers.ofString("""
+                                    {
+                                      "jsonrpc": "2.0",
+                                      "id": 2,
+                                      "method": "tools/call",
+                                      "params": {
+                                        "name": "ping",
+                                        "arguments": {}
+                                      }
+                                    }
+                                    """))
+                            .build();
+
+                    HttpResponse<String> pingResponse = client.send(
+                            pingRequest,
+                            HttpResponse.BodyHandlers.ofString()
+                    );
+
+                    assertEquals(200, pingResponse.statusCode());
+                    assertTrue(
+                            pingResponse.body().contains(
+                                    "hello from Project Context"
+                            )
+                    );
+                }
+            } finally {
+                httpServer.stop();
+            }
+        }
+    }
+
+    private static HttpRequest initializeRequest(URI endpoint) {
+        return HttpRequest.newBuilder()
+                .uri(endpoint)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString("""
+                        {
+                          "jsonrpc": "2.0",
+                          "id": 1,
+                          "method": "initialize",
+                          "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {
+                              "name": "project-context-test",
+                              "version": "1.0"
+                            }
+                          }
                         }
-                      }
-                    }
-                    """;
+                        """))
+                .build();
+    }
 
-                HttpRequest initializeRequest = HttpRequest.newBuilder()
-                        .uri(endpoint)
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .POST(HttpRequest.BodyPublishers.ofString(initializeBody))
-                        .build();
+    private static URI endpoint(JettyServer server) {
+        return URI.create(
+                "http://127.0.0.1:"
+                        + server.localPort()
+                        + McpEndpoint.MCP
+        );
+    }
 
-                HttpResponse<String> initializeResponse = client.send(
-                        initializeRequest,
-                        HttpResponse.BodyHandlers.ofString()
-                );
+    private static String projectVersion() {
+        Properties properties = new Properties();
 
-                assertEquals(200, initializeResponse.statusCode());
+        try (InputStream input =
+                     ProjectContextMcpServerTest.class
+                             .getResourceAsStream(VERSION_RESOURCE)) {
 
-                String sessionId = initializeResponse.headers()
-                        .firstValue("Mcp-Session-Id")
-                        .orElseThrow();
-
-                String initializedBody = """
-                    {
-                      "jsonrpc": "2.0",
-                      "method": "notifications/initialized"
-                    }
-                    """;
-
-                HttpRequest initializedRequest = HttpRequest.newBuilder()
-                        .uri(endpoint)
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .POST(HttpRequest.BodyPublishers.ofString(initializedBody))
-                        .build();
-
-                HttpResponse<String> initializedResponse = client.send(
-                        initializedRequest,
-                        HttpResponse.BodyHandlers.ofString()
-                );
-
-                assertEquals(202, initializedResponse.statusCode());
-
-                String pingBody = """
-                    {
-                      "jsonrpc": "2.0",
-                      "id": 2,
-                      "method": "tools/call",
-                      "params": {
-                        "name": "ping",
-                        "arguments": {}
-                      }
-                    }
-                    """;
-
-                HttpRequest pingRequest = HttpRequest.newBuilder()
-                        .uri(endpoint)
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .POST(HttpRequest.BodyPublishers.ofString(pingBody))
-                        .build();
-
-                HttpResponse<String> pingResponse = client.send(
-                        pingRequest,
-                        HttpResponse.BodyHandlers.ofString()
-                );
-
-                assertEquals(200, pingResponse.statusCode());
-                assertTrue(
-                        pingResponse.body().contains("hello from Project Context")
+            if (input == null) {
+                throw new IllegalStateException(
+                        "Project version resource not found: " + VERSION_RESOURCE
                 );
             }
-        } finally {
-            httpServer.stop();
+
+            properties.load(input);
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Failed to load project version",
+                    e
+            );
         }
+
+        String version = properties.getProperty(VERSION_PROPERTY);
+
+        if (version == null || version.isBlank()) {
+            throw new IllegalStateException(
+                    "Project version is missing or blank"
+            );
+        }
+
+        return version;
     }
 }

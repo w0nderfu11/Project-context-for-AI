@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PingToolTest {
 
@@ -24,6 +25,16 @@ class PingToolTest {
                 "Checks that Project Context is available",
                 specification.tool().description()
         );
+    }
+
+    @Test
+    void shouldRejectNullPingService() {
+        NullPointerException exception = assertThrows(
+                NullPointerException.class,
+                () -> new PingTool(null)
+        );
+
+        assertEquals("pingService must not be null", exception.getMessage());
     }
 
     @Test

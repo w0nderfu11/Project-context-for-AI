@@ -9,20 +9,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class McpHttpTransportTest {
 
     @Test
-    void shouldCreateTransportAndStartWithJetty() throws Exception {
+    void shouldCreateTransport() {
         McpHttpTransport mcpTransport = new McpHttpTransport();
+
+        assertNotNull(mcpTransport.transport());
+        assertNotNull(mcpTransport.handler());
+    }
+
+    @Test
+    void shouldExposeHandlerThatCanRunWithJetty() throws Exception {
+        McpHttpTransport mcpTransport = new McpHttpTransport();
+
         JettyServer server = new JettyServer(
                 "127.0.0.1",
                 0,
                 mcpTransport.handler()
         );
 
-        assertNotNull(mcpTransport.transport());
-
         try {
             server.start();
 
             assertTrue(server.isRunning());
+            assertTrue(server.localPort() > 0);
         } finally {
             server.stop();
         }
