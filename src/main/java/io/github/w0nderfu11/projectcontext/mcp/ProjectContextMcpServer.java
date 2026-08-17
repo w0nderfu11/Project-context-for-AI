@@ -1,6 +1,7 @@
 package io.github.w0nderfu11.projectcontext.mcp;
 
 import io.github.w0nderfu11.projectcontext.mcp.tools.PingTool;
+import io.github.w0nderfu11.projectcontext.mcp.tools.ReadFileTool;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpSyncServer;
 
@@ -18,14 +19,19 @@ public final class ProjectContextMcpServer implements AutoCloseable {
 
     public ProjectContextMcpServer(
             McpHttpTransport transport,
-            PingTool pingTool
+            PingTool pingTool,
+            ReadFileTool readFileTool
     ) {
         Objects.requireNonNull(transport, "transport must not be null");
         Objects.requireNonNull(pingTool, "pingTool must not be null");
+        Objects.requireNonNull(readFileTool, "readFileTool must not be null");
 
         this.server = McpServer.sync(transport.transport())
                 .serverInfo(SERVER_NAME, projectVersion())
-                .tools(pingTool.specification())
+                .tools(
+                        pingTool.specification(),
+                        readFileTool.specification()
+                )
                 .build();
     }
 
