@@ -1,9 +1,13 @@
 package io.github.w0nderfu11.projectcontext.mcp;
 
 import io.github.w0nderfu11.projectcontext.application.PingService;
+import io.github.w0nderfu11.projectcontext.application.ReadFileService;
 import io.github.w0nderfu11.projectcontext.mcp.tools.PingTool;
+import io.github.w0nderfu11.projectcontext.mcp.tools.ReadFileTool;
+import io.github.w0nderfu11.projectcontext.registry.ProjectRegistry;
 import io.github.w0nderfu11.projectcontext.server.JettyServer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -11,6 +15,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -23,50 +30,99 @@ class ProjectContextMcpServerTest {
     private static final String VERSION_RESOURCE = "/project-context.properties";
     private static final String VERSION_PROPERTY = "project.version";
 
+    @TempDir
+    Path tempDir;
+
     @Test
-    void shouldCreateAndCloseMcpServer() {
+    void shouldCreateAndCloseMcpServer() throws IOException {
         McpHttpTransport transport = new McpHttpTransport();
         PingTool pingTool = new PingTool(new PingService());
+        ReadFileTool readFileTool = readFileTool();
 
         assertDoesNotThrow(() ->
-                new ProjectContextMcpServer(transport, pingTool).close()
+                new ProjectContextMcpServer(
+                        transport,
+                        pingTool,
+                        readFileTool
+                ).close()
         );
     }
 
     @Test
     @SuppressWarnings("resource")
-    void shouldRejectNullTransport() {
+    void shouldRejectNullTransport() throws IOException {
+        PingTool pingTool = new PingTool(new PingService());
+        ReadFileTool readFileTool = readFileTool();
+
+        NullPointerException exception = assertThrows(
+                NullPointerException.class,
+                () -> new ProjectContextMcpServer(
+                        null,
+                        pingTool,
+                        readFileTool
+                )
+        );
+
+        assertEquals(
+                "transport must not be null",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    @SuppressWarnings("resource")
+    void shouldRejectNullPingTool() throws IOException {
+        McpHttpTransport transport = new McpHttpTransport();
+        ReadFileTool readFileTool = readFileTool();
+
+        NullPointerException exception = assertThrows(
+                NullPointerException.class,
+                () -> new ProjectContextMcpServer(
+                        transport,
+                        null,
+                        readFileTool
+                )
+        );
+
+        assertEquals(
+                "pingTool must not be null",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    @SuppressWarnings("resource")
+    void shouldRejectNullReadFileTool() {
+        McpHttpTransport transport = new McpHttpTransport();
         PingTool pingTool = new PingTool(new PingService());
 
         NullPointerException exception = assertThrows(
                 NullPointerException.class,
-                () -> new ProjectContextMcpServer(null, pingTool)
+                () -> new ProjectContextMcpServer(
+                        transport,
+                        pingTool,
+                        null
+                )
         );
 
-        assertEquals("transport must not be null", exception.getMessage());
-    }
-
-
-    @Test
-    @SuppressWarnings("resource")
-    void shouldRejectNullPingTool() {
-        McpHttpTransport transport = new McpHttpTransport();
-
-        NullPointerException exception = assertThrows(
-                NullPointerException.class,
-                () -> new ProjectContextMcpServer(transport, null)
+        assertEquals(
+                "readFileTool must not be null",
+                exception.getMessage()
         );
-
-        assertEquals("pingTool must not be null", exception.getMessage());
     }
 
     @Test
     void shouldInitializeMcpServerOverHttp() throws Exception {
         McpHttpTransport transport = new McpHttpTransport();
         PingTool pingTool = new PingTool(new PingService());
+        ReadFileTool readFileTool = readFileTool();
 
         try (ProjectContextMcpServer ignored =
-                     new ProjectContextMcpServer(transport, pingTool)) {
+                     new ProjectContextMcpServer(
+                             transport,
+                             pingTool,
+                             readFileTool
+                     )) {
 
             JettyServer httpServer = new JettyServer(
                     "127.0.0.1",
@@ -86,10 +142,14 @@ class ProjectContextMcpServerTest {
                     );
 
                     assertEquals(200, response.statusCode());
-                    assertTrue(response.body().contains("\"project-context\""));
-                    assertTrue(response.body().contains(
-                            "\"" + projectVersion() + "\""
-                    ));
+                    assertTrue(
+                            response.body().contains("\"project-context\"")
+                    );
+                    assertTrue(
+                            response.body().contains(
+                                    "\"" + projectVersion() + "\""
+                            )
+                    );
                 }
             } finally {
                 httpServer.stop();
@@ -101,9 +161,14 @@ class ProjectContextMcpServerTest {
     void shouldCallPingToolOverHttp() throws Exception {
         McpHttpTransport transport = new McpHttpTransport();
         PingTool pingTool = new PingTool(new PingService());
+        ReadFileTool readFileTool = readFileTool();
 
         try (ProjectContextMcpServer ignored =
-                     new ProjectContextMcpServer(transport, pingTool)) {
+                     new ProjectContextMcpServer(
+                             transport,
+                             pingTool,
+                             readFileTool
+                     )) {
 
             JettyServer httpServer = new JettyServer(
                     "127.0.0.1",
@@ -117,51 +182,16 @@ class ProjectContextMcpServerTest {
                 URI endpoint = endpoint(httpServer);
 
                 try (HttpClient client = HttpClient.newHttpClient()) {
-                    HttpResponse<String> initializeResponse = client.send(
-                            initializeRequest(endpoint),
-                            HttpResponse.BodyHandlers.ofString()
+                    String sessionId = initializeSession(
+                            client,
+                            endpoint
                     );
 
-                    assertEquals(200, initializeResponse.statusCode());
-
-                    String sessionId = initializeResponse.headers()
-                            .firstValue("Mcp-Session-Id")
-                            .orElseThrow();
-
-                    //noinspection UastIncorrectHttpHeaderInspection
-                    HttpRequest initializedRequest = HttpRequest.newBuilder()
-                            .uri(endpoint)
-                            .header("Content-Type", "application/json")
-                            .header(
-                                    "Accept",
-                                    "application/json, text/event-stream"
-                            )
-                            .header("Mcp-Session-Id", sessionId)
-                            .POST(HttpRequest.BodyPublishers.ofString("""
-                                    {
-                                      "jsonrpc": "2.0",
-                                      "method": "notifications/initialized"
-                                    }
-                                    """))
-                            .build();
-
-                    HttpResponse<String> initializedResponse = client.send(
-                            initializedRequest,
-                            HttpResponse.BodyHandlers.ofString()
-                    );
-
-                    assertEquals(202, initializedResponse.statusCode());
-
-                    //noinspection UastIncorrectHttpHeaderInspection
-                    HttpRequest pingRequest = HttpRequest.newBuilder()
-                            .uri(endpoint)
-                            .header("Content-Type", "application/json")
-                            .header(
-                                    "Accept",
-                                    "application/json, text/event-stream"
-                            )
-                            .header("Mcp-Session-Id", sessionId)
-                            .POST(HttpRequest.BodyPublishers.ofString("""
+                    HttpResponse<String> pingResponse = client.send(
+                            toolRequest(
+                                    endpoint,
+                                    sessionId,
+                                    """
                                     {
                                       "jsonrpc": "2.0",
                                       "id": 2,
@@ -171,11 +201,8 @@ class ProjectContextMcpServerTest {
                                         "arguments": {}
                                       }
                                     }
-                                    """))
-                            .build();
-
-                    HttpResponse<String> pingResponse = client.send(
-                            pingRequest,
+                                    """
+                            ),
                             HttpResponse.BodyHandlers.ofString()
                     );
 
@@ -192,11 +219,142 @@ class ProjectContextMcpServerTest {
         }
     }
 
+    @Test
+    void shouldCallReadFileToolOverHttp() throws Exception {
+        Path file = Files.writeString(
+                tempDir.resolve("Example.java"),
+                """
+                public class Example {
+
+                    public void execute() {
+                        System.out.println("hello");
+                    }
+                }
+                """
+        );
+
+        McpHttpTransport transport = new McpHttpTransport();
+        PingTool pingTool = new PingTool(new PingService());
+        ReadFileTool readFileTool = readFileTool();
+
+        try (ProjectContextMcpServer ignored =
+                     new ProjectContextMcpServer(
+                             transport,
+                             pingTool,
+                             readFileTool
+                     )) {
+
+            JettyServer httpServer = new JettyServer(
+                    "127.0.0.1",
+                    0,
+                    transport.handler()
+            );
+
+            try {
+                httpServer.start();
+
+                URI endpoint = endpoint(httpServer);
+
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    String sessionId = initializeSession(
+                            client,
+                            endpoint
+                    );
+
+                    String requestBody = """
+                            {
+                              "jsonrpc": "2.0",
+                              "id": 3,
+                              "method": "tools/call",
+                              "params": {
+                                "name": "read_file",
+                                "arguments": {
+                                  "projectName": "project",
+                                  "filePath": "%s"
+                                }
+                              }
+                            }
+                            """.formatted(
+                            jsonPath(file.toRealPath())
+                    );
+
+                    HttpResponse<String> response = client.send(
+                            toolRequest(
+                                    endpoint,
+                                    sessionId,
+                                    requestBody
+                            ),
+                            HttpResponse.BodyHandlers.ofString()
+                    );
+
+                    assertEquals(200, response.statusCode());
+                    assertTrue(
+                            response.body().contains(
+                                    "public class Example"
+                            )
+                    );
+                    assertTrue(
+                            response.body().contains(
+                                    "System.out.println"
+                            )
+                    );
+                }
+            } finally {
+                httpServer.stop();
+            }
+        }
+    }
+
+    private ReadFileTool readFileTool() throws IOException {
+        ProjectRegistry registry = new ProjectRegistry(
+                Map.of(
+                        "project",
+                        tempDir
+                )
+        );
+
+        ReadFileService readFileService =
+                new ReadFileService(registry);
+
+        return new ReadFileTool(readFileService);
+    }
+
+    private static String initializeSession(
+            HttpClient client,
+            URI endpoint
+    ) throws Exception {
+        HttpResponse<String> initializeResponse = client.send(
+                initializeRequest(endpoint),
+                HttpResponse.BodyHandlers.ofString()
+        );
+
+        assertEquals(200, initializeResponse.statusCode());
+
+        String sessionId = initializeResponse.headers()
+                .firstValue("Mcp-Session-Id")
+                .orElseThrow();
+
+        HttpResponse<String> initializedResponse = client.send(
+                initializedRequest(
+                        endpoint,
+                        sessionId
+                ),
+                HttpResponse.BodyHandlers.ofString()
+        );
+
+        assertEquals(202, initializedResponse.statusCode());
+
+        return sessionId;
+    }
+
     private static HttpRequest initializeRequest(URI endpoint) {
         return HttpRequest.newBuilder()
                 .uri(endpoint)
                 .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
+                .header(
+                        "Accept",
+                        "application/json, text/event-stream"
+                )
                 .POST(HttpRequest.BodyPublishers.ofString("""
                         {
                           "jsonrpc": "2.0",
@@ -215,12 +373,58 @@ class ProjectContextMcpServerTest {
                 .build();
     }
 
+    private static HttpRequest initializedRequest(
+            URI endpoint,
+            String sessionId
+    ) {
+        //noinspection UastIncorrectHttpHeaderInspection
+        return HttpRequest.newBuilder()
+                .uri(endpoint)
+                .header("Content-Type", "application/json")
+                .header(
+                        "Accept",
+                        "application/json, text/event-stream"
+                )
+                .header("Mcp-Session-Id", sessionId)
+                .POST(HttpRequest.BodyPublishers.ofString("""
+                        {
+                          "jsonrpc": "2.0",
+                          "method": "notifications/initialized"
+                        }
+                        """))
+                .build();
+    }
+
+    private static HttpRequest toolRequest(
+            URI endpoint,
+            String sessionId,
+            String body
+    ) {
+        //noinspection UastIncorrectHttpHeaderInspection
+        return HttpRequest.newBuilder()
+                .uri(endpoint)
+                .header("Content-Type", "application/json")
+                .header(
+                        "Accept",
+                        "application/json, text/event-stream"
+                )
+                .header("Mcp-Session-Id", sessionId)
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+    }
+
     private static URI endpoint(JettyServer server) {
         return URI.create(
                 "http://127.0.0.1:"
                         + server.localPort()
                         + McpEndpoint.MCP
         );
+    }
+
+    private static String jsonPath(Path path) {
+        return path.toString()
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"");
     }
 
     private static String projectVersion() {
@@ -232,7 +436,8 @@ class ProjectContextMcpServerTest {
 
             if (input == null) {
                 throw new IllegalStateException(
-                        "Project version resource not found: " + VERSION_RESOURCE
+                        "Project version resource not found: "
+                                + VERSION_RESOURCE
                 );
             }
 
