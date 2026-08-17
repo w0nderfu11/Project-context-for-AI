@@ -13,7 +13,7 @@ public final class PingTool {
     private static final String TOOL_NAME = "ping";
     private static final String TOOL_TITLE = "Ping";
     private static final String TOOL_DESCRIPTION =
-            "Checks that project context is available";
+            "Checks that Project Context is available";
 
     private static final Map<String, Object> INPUT_SCHEMA = Map.of(
             "type", "object",
